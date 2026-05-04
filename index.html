@@ -221,12 +221,26 @@ var scenarios=[
   {id:'r12',label:'Scenario 12',group:'Additional',tag:'EB gatekeeper',context:'You have been working with Tom, a Senior Manager of PS, for six weeks. The deal is progressing but you have never spoken to the budget holder. You ask Tom about getting the CFO involved.',prospect:'"I don\'t think we need to involve Sarah at this stage. She\'s very busy and I\'d rather not put something in front of her until I\'m completely sure this is the right fit. Let\'s keep going for now."'}
 ];
 var feedbackCache={};
+var currentApiKey='';
+
 function buildRplay(){
   var panel=document.getElementById('rplay-panel');
-  var introHTML='<div class="rp-intro"><p>Read each prospect scenario, then type your response as you would deliver it on a live call. AI feedback will evaluate your commercial posture, objection handling, MEDDPICC alignment, and language — and provide a model response to compare against.</p></div>';
-  var navHTML='<div class="nav-pills" id="rp-nav"></div>';
-  var cardHTML='<div id="rp-card"></div>';
-  panel.innerHTML=introHTML+navHTML+cardHTML;
+  panel.innerHTML=
+    '<div class="rp-intro">'+
+    '<p style="font-weight:500;color:#1a1a18;margin-bottom:8px">How this works</p>'+
+    '<p>Read each prospect scenario and type your response as you would deliver it on a live call. AI feedback will score your commercial posture, objection handling, MEDDPICC alignment, and language — and provide a model response to compare against.</p>'+
+    '</div>'+
+    '<div class="card" style="margin-bottom:20px">'+
+    '<div class="sec-label" style="margin-top:0">Anthropic API key</div>'+
+    '<p style="font-size:13px;color:#5f5e5a;line-height:1.7;margin-bottom:12px">Paste your Anthropic API key below to enable AI feedback. Your key is only used in your browser session and is never stored. Get a free key at <a href="https://console.anthropic.com" target="_blank" style="color:#378add">console.anthropic.com</a>.</p>'+
+    '<div style="display:flex;gap:8px;align-items:center;flex-wrap:wrap">'+
+    '<input type="password" id="api-key-input" placeholder="sk-ant-..." style="flex:1;min-width:200px;padding:10px 12px;border:1px solid #d3d1c7;border-radius:8px;font-size:13px;font-family:inherit;color:#1a1a18;background:#fff" />'+
+    '<button onclick="saveApiKey()" style="padding:10px 16px;font-size:13px;cursor:pointer;border-radius:8px;border:1px solid #d3d1c7;background:#1a1a18;color:#fff;font-family:inherit;white-space:nowrap">Save key</button>'+
+    '</div>'+
+    '<div id="api-key-status" style="font-size:12px;margin-top:8px;color:#9b9990"></div>'+
+    '</div>'+
+    '<div class="nav-pills" id="rp-nav"></div>'+
+    '<div id="rp-card"></div>';
   var nav=document.getElementById('rp-nav');
   scenarios.forEach(function(s){
     var b=document.createElement('button');b.className='npill';b.id='rn-'+s.id;
@@ -236,6 +250,22 @@ function buildRplay(){
   });
   showScenario('r1');
 }
+
+function saveApiKey(){
+  var input=document.getElementById('api-key-input');
+  var status=document.getElementById('api-key-status');
+  var key=input.value.trim();
+  if(!key||key.indexOf('sk-ant-')===-1){
+    status.style.color='#e24b4a';
+    status.textContent='That does not look like a valid Anthropic API key. It should start with sk-ant-';
+    return;
+  }
+  currentApiKey=key;
+  status.style.color='#639922';
+  status.textContent='API key saved for this session. You can now use AI feedback on any scenario.';
+  input.value='';
+}
+
 function showScenario(id){
   var s=scenarios.find(function(x){return x.id===id;});
   document.querySelectorAll('#rp-nav .npill').forEach(function(b){b.style.cssText='';});
@@ -249,16 +279,22 @@ function showScenario(id){
     '<div class="prospect-says"><div class="prospect-label">Prospect says</div><p>'+s.prospect+'</p></div>'+
     '<div class="sec-label">Your response</div>'+
     '<textarea class="rp-textarea" id="rp-input-'+id+'" placeholder="Type your response here — write it as you would say it on the call...">'+savedResponse+'</textarea>'+
-    '<button class="rp-btn" id="rp-submit-'+id+'" onclick="submitResponse(\''+id+'\')">Get feedback</button>'+
+    '<button class="rp-btn" id="rp-submit-'+id+'" onclick="submitResponse(\''+id+'\')">Get AI feedback</button>'+
     savedFeedback+
     '</div>';
 }
+
 function submitResponse(id){
   var s=scenarios.find(function(x){return x.id===id;});
   var input=document.getElementById('rp-input-'+id);
   var btn=document.getElementById('rp-submit-'+id);
   var response=input.value.trim();
   if(!response){alert('Please type your response before submitting.');return;}
+  if(!currentApiKey){
+    alert('Please paste your Anthropic API key at the top of this tab before submitting.');
+    document.getElementById('api-key-input').focus();
+    return;
+  }
   feedbackCache[id+'_response']=response;
   btn.disabled=true;btn.textContent='Getting feedback...';
   var existing=document.querySelector('.feedback-box');
@@ -271,11 +307,18 @@ function submitResponse(id){
   var userPrompt='Scenario: '+s.context+'\n\nProspect said: '+s.prospect+'\n\nRep response: '+response;
   fetch('https://api.anthropic.com/v1/messages',{
     method:'POST',
-    headers:{'Content-Type':'application/json'},
+    headers:{'Content-Type':'application/json','x-api-key':currentApiKey,'anthropic-version':'2023-06-01','anthropic-dangerous-direct-browser-access':'true'},
     body:JSON.stringify({model:'claude-sonnet-4-20250514',max_tokens:1000,system:systemPrompt,messages:[{role:'user',content:userPrompt}]})
   }).then(function(r){return r.json();}).then(function(data){
     var loading=document.getElementById('rp-loading-'+id);if(loading)loading.remove();
-    btn.disabled=false;btn.textContent='Get feedback';
+    btn.disabled=false;btn.textContent='Get AI feedback';
+    if(data.error){
+      var errDiv=document.createElement('div');
+      errDiv.className='feedback-box';
+      errDiv.innerHTML='<div class="feedback-header">Error</div><div class="feedback-body"><p style="font-size:13px;color:#e24b4a">'+data.error.message+'</p></div>';
+      btn.parentNode.insertBefore(errDiv,btn.nextSibling);
+      return;
+    }
     var text=data.content&&data.content[0]?data.content[0].text:'';
     var parsed;
     try{parsed=JSON.parse(text);}catch(e){parsed=null;}
@@ -302,10 +345,10 @@ function submitResponse(id){
     btn.parentNode.insertBefore(fbDiv,btn.nextSibling);
   }).catch(function(err){
     var loading=document.getElementById('rp-loading-'+id);if(loading)loading.remove();
-    btn.disabled=false;btn.textContent='Get feedback';
+    btn.disabled=false;btn.textContent='Get AI feedback';
     var fbDiv=document.createElement('div');
     fbDiv.className='feedback-box';
-    fbDiv.innerHTML='<div class="feedback-header">AI Feedback</div><div class="feedback-body"><p style="font-size:13px;color:#e24b4a">Something went wrong. Please check your connection and try again.</p></div>';
+    fbDiv.innerHTML='<div class="feedback-header">Error</div><div class="feedback-body"><p style="font-size:13px;color:#e24b4a">Could not connect to the API. Please check your key and try again.</p></div>';
     btn.parentNode.insertBefore(fbDiv,btn.nextSibling);
   });
 }
